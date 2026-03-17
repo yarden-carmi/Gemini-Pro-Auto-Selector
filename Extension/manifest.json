@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Pro Auto-Selector",
+  "version": "1.4",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "Gemini-Pro-Auto-Selector@yarden-carmi",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ],
+        "optional": []
+      }
+    }
+  },
+  "description": "Automatically selects the preferred model on Gemini.",
+  "permissions": [
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "host_permissions": [
+    "https://gemini.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "exclude_matches": [
+        "https://gemini.google.com/gems/create*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

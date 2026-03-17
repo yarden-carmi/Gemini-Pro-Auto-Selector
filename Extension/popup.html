@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
+  <style>
+    :root {
+      --primary-color: #1a73e8;
+      --bg-color: #ffffff;
+      --text-color: #202124;
+      --secondary-text: #5f6368;
+      --border-color: #e8eaed;
+      --hover-bg: #f8f9fa;
+      --shadow-sm: 0 1px 2px 0 rgba(60, 64, 67, 0.15);
+    }
+
+    body {
+      width: 300px;
+      min-height: 250px;
+      padding: 0;
+      margin: 0;
+      font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .container {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-color);
+      background-color: var(--hover-bg);
+    }
+
+    .header-title {
+      font-size: 16px;
+      font-weight: 400;
+      color: var(--text-color);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: -0.2px;
+    }
+
+    .header-title img {
+      width: 20px;
+      height: 20px;
+    }
+
+    .section {
+      margin-top: 16px;
+    }
+
+    .label {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--secondary-text);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Switch Styling */
+    .switch-group {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background-color: var(--hover-bg);
+      border: 1px solid var(--border-color);
+      transition: background-color 0.1s;
+    }
+
+    .switch-label {
+      font-size: 13px;
+      font-weight: 400;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 18px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .no-transition *,
+    .no-transition *::before,
+    .no-transition *::after {
+      transition: none !important;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #bdc1c6;
+      transition: .05s ease-in-out;
+      border-radius: 18px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .05s ease-in-out;
+      border-radius: 50%;
+      box-shadow: var(--shadow-sm);
+    }
+
+    input:checked+.slider {
+      background-color: var(--primary-color);
+    }
+
+    input:focus+.slider {
+      box-shadow: 0 0 1px var(--primary-color);
+    }
+
+    input:checked+.slider:before {
+      transform: translateX(16px);
+    }
+
+    /* Custom Select Styling */
+    .custom-select {
+      position: relative;
+      user-select: none;
+    }
+
+    .select-selected {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background-color: var(--bg-color);
+      cursor: pointer;
+      transition: all 0.05s ease;
+      font-size: 13px;
+      font-weight: 400;
+      height: 20px;
+    }
+
+    .select-selected:hover {
+      background-color: var(--hover-bg);
+    }
+
+    .select-selected.select-arrow-active {
+      box-shadow: 0 25px 25px 25px rgba(26, 115, 232, 0.05);
+    }
+
+    .model-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .model-icon {
+      font-size: 16px;
+      line-height: 1;
+      color: #5f6368;
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+
+    .select-items {
+      position: absolute;
+      background-color: var(--bg-color);
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 99;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(-2px);
+      pointer-events: none;
+      transition: all 0.075s ease;
+    }
+
+    .select-items.select-show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .select-items div {
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 400;
+      transition: background-color 0.05s;
+    }
+
+    .select-items div:hover {
+      background-color: var(--hover-bg);
+    }
+
+    .select-items div:first-child {
+      border-top-left-radius: 5px;
+      border-top-right-radius: 5px;
+    }
+
+    .select-items div:last-child {
+      border-bottom-left-radius: 5px;
+      border-bottom-right-radius: 5px;
+    }
+
+    .same-as-selected {
+      background-color: rgba(26, 115, 232, 0.05);
+      color: var(--primary-color);
+    }
+
+    .same-as-selected .model-icon {
+      color: var(--primary-color);
+    }
+
+    .footer {
+      margin-top: auto;
+      font-size: 10px;
+      color: var(--secondary-text);
+      text-align: center;
+      border-top: 1px solid var(--border-color);
+      padding-top: 12px;
+      padding-bottom: 4px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+
+      width: 100%;
+    }
+  </style>
+</head>
+
+<body class="no-transition">
+  <div class="header">
+    <div class="header-title">
+      <img src="icons/icon128.png" alt="Gemini Pro Auto-Selector Logo">
+      <span>Gemini Pro Auto-Selector</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="switch-group">
+      <span class="switch-label">Auto-Selector Status</span>
+      <label class="switch">
+        <input type="checkbox" id="enabled-toggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="section">
+      <div class="label">Default Model</div>
+      <div class="custom-select" id="custom-model-select">
+        <div class="select-selected">
+          <div class="model-info" id="selected-model-display">
+            <span class="material-symbols-outlined model-icon">diamond_shine</span>
+            <span>Pro</span>
+          </div>
+          <svg class="select-arrow" width="10" height="6" viewBox="0 0 10 6" fill="none"
+            xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 1L5 5L9 1" stroke="#5f6368" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
+        <div class="select-items">
+          <div data-value="pro">
+            <span class="material-symbols-outlined model-icon">diamond_shine</span>
+            <span>Pro</span>
+          </div>
+          <div data-value="thinking">
+            <span class="material-symbols-outlined model-icon">cognition_2</span>
+            <span>Thinking</span>
+          </div>
+          <div data-value="fast">
+            <span class="material-symbols-outlined model-icon">bolt</span>
+            <span>Fast</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      Yarden Carmi 2026
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>
