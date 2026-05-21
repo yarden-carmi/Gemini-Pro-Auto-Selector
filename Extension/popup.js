@@ -1,59 +1,98 @@
 document.addEventListener('DOMContentLoaded', () => {
   const enabledToggle = document.getElementById('enabled-toggle');
-  const customSelect = document.getElementById('custom-model-select');
-  const selectSelected = customSelect.querySelector('.select-selected');
-  const selectItems = customSelect.querySelector('.select-items');
+  
+  // Model Select
+  const modelSelect = document.getElementById('custom-model-select');
+  const modelSelected = modelSelect.querySelector('.select-selected');
+  const modelItems = modelSelect.querySelector('.select-items');
   const selectedModelDisplay = document.getElementById('selected-model-display');
 
+  // Thinking Select
+  const thinkingSelect = document.getElementById('custom-thinking-select');
+  const thinkingSelected = thinkingSelect.querySelector('.select-selected');
+  const thinkingItems = thinkingSelect.querySelector('.select-items');
+  const selectedThinkingDisplay = document.getElementById('selected-thinking-display');
+
   const modelOptions = {
-    'pro':     { name: 'Pro',      icon: 'diamond_shine' },
-    'thinking':{ name: 'Thinking', icon: 'cognition_2' },
-    'fast':    { name: 'Fast',     icon: 'bolt' }
+    'pro':        { name: '3.1 Pro',      icon: 'diamond_shine' },
+    'flash':      { name: '3.5 Flash',    icon: 'bolt' },
+    'flash-lite': { name: '3.1 Flash-Lite', icon: 'speed' }
   };
 
+  const thinkingOptions = {
+    'standard': { name: 'Standard', icon: 'psychology' },
+    'extended': { name: 'Extended', icon: 'cognition_2' }
+  };
 
-
-  function closeDropdown() {
-    selectSelected.classList.remove('select-arrow-active');
-    selectItems.classList.remove('select-show');
+  function closeDropdowns() {
+    modelSelected.classList.remove('select-arrow-active');
+    modelItems.classList.remove('select-show');
+    thinkingSelected.classList.remove('select-arrow-active');
+    thinkingItems.classList.remove('select-show');
   }
 
-  function updateSelectedDisplay(value) {
-    const model = modelOptions[value];
-    if (!model) return;
-    selectedModelDisplay.innerHTML = `
-      <span class="material-symbols-outlined model-icon">${model.icon}</span>
-      <span>${model.name}</span>
+  function updateDisplay(displayEl, itemsContainer, value, optionsMap) {
+    const option = optionsMap[value];
+    if (!option) return;
+    displayEl.innerHTML = `
+      <span class="material-symbols-outlined model-icon">${option.icon}</span>
+      <span>${option.name}</span>
     `;
-    selectItems.querySelectorAll('div').forEach(item => {
+    itemsContainer.querySelectorAll('div').forEach(item => {
       item.classList.toggle('same-as-selected', item.getAttribute('data-value') === value);
     });
   }
 
-  // Toggle dropdown open/closed
-  selectSelected.addEventListener('click', function(e) {
+  // Model Toggle
+  modelSelected.addEventListener('click', function(e) {
     e.stopPropagation();
-    this.classList.toggle('select-arrow-active');
-    selectItems.classList.toggle('select-show');
+    const wasActive = this.classList.contains('select-arrow-active');
+    closeDropdowns();
+    if (!wasActive) {
+      this.classList.add('select-arrow-active');
+      modelItems.classList.add('select-show');
+    }
   });
 
-  // Handle option selection
-  selectItems.querySelectorAll('div').forEach(item => {
+  // Thinking Toggle
+  thinkingSelected.addEventListener('click', function(e) {
+    e.stopPropagation();
+    const wasActive = this.classList.contains('select-arrow-active');
+    closeDropdowns();
+    if (!wasActive) {
+      this.classList.add('select-arrow-active');
+      thinkingItems.classList.add('select-show');
+    }
+  });
+
+  // Handle Model selection
+  modelItems.querySelectorAll('div').forEach(item => {
     item.addEventListener('click', function() {
       const value = this.getAttribute('data-value');
-      updateSelectedDisplay(value);
+      updateDisplay(selectedModelDisplay, modelItems, value, modelOptions);
       chrome.storage.sync.set({ preferredModel: value });
-      closeDropdown();
+      closeDropdowns();
+    });
+  });
+
+  // Handle Thinking selection
+  thinkingItems.querySelectorAll('div').forEach(item => {
+    item.addEventListener('click', function() {
+      const value = this.getAttribute('data-value');
+      updateDisplay(selectedThinkingDisplay, thinkingItems, value, thinkingOptions);
+      chrome.storage.sync.set({ thinkingLevel: value });
+      closeDropdowns();
     });
   });
 
   // Close dropdown on outside click
-  document.addEventListener('click', closeDropdown);
+  document.addEventListener('click', closeDropdowns);
 
   // Load saved settings
-  chrome.storage.sync.get(['enabled', 'preferredModel'], (result) => {
+  chrome.storage.sync.get(['enabled', 'preferredModel', 'thinkingLevel'], (result) => {
     if (result.enabled !== undefined) enabledToggle.checked = result.enabled;
-    updateSelectedDisplay(result.preferredModel ?? 'pro');
+    updateDisplay(selectedModelDisplay, modelItems, result.preferredModel ?? 'pro', modelOptions);
+    updateDisplay(selectedThinkingDisplay, thinkingItems, result.thinkingLevel ?? 'standard', thinkingOptions);
 
     // Re-enable transitions after initial state is painted
     requestAnimationFrame(() => {

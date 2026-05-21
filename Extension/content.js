@@ -4,30 +4,31 @@
 
 // CSS selectors for Gemini's model-switcher UI elements.
 // These are stable class/attribute names used throughout the extension.
-const TRIGGER_SELECTOR       = ".input-area-switch";          // The pill button that opens the model menu
+const TRIGGER_SELECTOR = ".input-area-switch";          // The pill button that opens the model menu
 const TRIGGER_LABEL_SELECTOR = ".logo-pill-label-container span"; // Text label inside the trigger pill
 
 // Maps each internal model key to its aria data-test-id in the dropdown menu.
 // Gemini uses these predictable test IDs, so we prefer them over text-matching.
 const MODEL_SELECTORS = {
-  "pro":     "[data-test-id='bard-mode-option-pro']",
-  "thinking":"[data-test-id='bard-mode-option-thinking']",
-  "fast":    "[data-test-id='bard-mode-option-fast']"
+  "pro": "[data-test-id='bard-mode-option-pro']",
+  "flash": "[data-test-id='bard-mode-option-flash']",
+  "flash-lite": "[data-test-id='bard-mode-option-flash-lite']"
 };
 
 // Default priority order when the user picks "pro" (or an unknown value).
 // The extension walks this list top-to-bottom and picks the first non-limited model.
-const MODEL_HIERARCHY_BASE = ["pro", "thinking", "fast"];
+const MODEL_HIERARCHY_BASE = ["pro", "flash", "flash-lite"];
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-let settings = { enabled: true, preferredModel: "pro" };
+let settings = { enabled: true, preferredModel: "pro", thinkingLevel: "standard" };
 
 // True once the user has physically clicked the model switcher this session.
 // When set, the auto-switcher backs off permanently until the page reloads.
 let userManuallySelected = false;
 
 let lastKnownModel = null;         // Last confirmed model key seen in the trigger label
+let lastKnownThinkingLevel = null; // Last confirmed thinking level
 let lastTriggerClickTime = 0;      // Timestamp of the last programmatic trigger click (debounce)
 let isExtensionClick = false;      // Guards against misidentifying our own synthetic clicks as manual input
 let extensionActionTimeout = null; // Timer handle for clearing isExtensionClick
@@ -39,9 +40,9 @@ let observer = null;               // The primary MutationObserver that watches 
 /** Derive a model key from a display text string. */
 function getModelFromText(text) {
   text = text.trim().toLowerCase();
-  if (text.includes("pro") || text.includes("advanced")) return "pro";
-  if (text.includes("thinking")) return "thinking";
-  if (text.includes("flash") || text.includes("fast")) return "fast";
+  if (text.includes("pro")) return "pro";
+  if (text.includes("flash-lite")) return "flash-lite";
+  if (text.includes("flash") && !text.includes("lite")) return "flash";
   return null;
 }
 
@@ -66,6 +67,7 @@ function simulateOptionClick(element) {
       bubbles: true, cancelable: true, view: window, composed: true
     }));
   });
+  try { element.click(); } catch (e) { }
 }
 
 /**
@@ -83,6 +85,7 @@ function setExtensionClick(ms = 800) {
 function resetState() {
   userManuallySelected = false;
   lastKnownModel = null;
+  lastKnownThinkingLevel = null;
   lastTriggerClickTime = 0;
   knownRateLimitedModels.clear();
 }
@@ -96,21 +99,24 @@ function restartObserver() {
 
 // ── Settings persistence ─────────────────────────────────────────────────────
 
-// Load saved settings on initial inject, then trigger a first-pass model check.
-chrome.storage.sync.get(["enabled", "preferredModel"], (result) => {
+chrome.storage.sync.get(["enabled", "preferredModel", "thinkingLevel"], (result) => {
   if (result.enabled !== undefined) settings.enabled = result.enabled;
   if (result.preferredModel !== undefined) settings.preferredModel = result.preferredModel;
+  if (result.thinkingLevel !== undefined) settings.thinkingLevel = result.thinkingLevel;
   selectPreferredModel();
 });
 
-// React to popup changes in real-time without requiring a page reload.
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.enabled) settings.enabled = changes.enabled.newValue;
-  if (changes.preferredModel) settings.preferredModel = changes.preferredModel.newValue;
+  if (changes.preferredModel) {
+    settings.preferredModel = changes.preferredModel.newValue;
+    lastKnownThinkingLevel = null;
+  }
+  if (changes.thinkingLevel) {
+    settings.thinkingLevel = changes.thinkingLevel.newValue;
+    lastKnownThinkingLevel = null;
+  }
 
-  // Reset session state, but snapshot the current label first and mark the
-  // next tick as extension-initiated so the observer doesn't misread it as
-  // a manual override when the model doesn't yet match the new preference.
   resetState();
   const triggerLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
   if (triggerLabel) lastKnownModel = getModelFromText(triggerLabel.textContent);
@@ -122,12 +128,9 @@ chrome.storage.onChanged.addListener((changes) => {
 
 // ── Manual-interaction detection ─────────────────────────────────────────────
 
-// Capture-phase mousedown lets us intercept user clicks before they reach
-// Angular's event handlers. Only trusted events (real mouse input) count —
-// our synthetic MouseEvents have e.isTrusted === false and are ignored.
 document.addEventListener("mousedown", (e) => {
   const isTrigger = e.target.closest(".input-area-switch");
-  const isModelOption = e.target.closest("[role='menuitemradio'], [role='menuitem']");
+  const isModelOption = e.target.closest("gem-menu-item, [role='menuitemradio'], [role='menuitem']");
 
   if ((isTrigger || isModelOption) && e.isTrusted) {
     userManuallySelected = true;
@@ -142,9 +145,6 @@ document.addEventListener("mousedown", (e) => {
 function selectPreferredModel() {
   if (!settings.enabled || userManuallySelected) return;
 
-  // Proactively detect quota banners before reading the trigger label.
-  // Gemini sometimes still shows "Pro" in the pill even when Pro is limited,
-  // so we scan the DOM for known rate-limit message strings.
   for (const banner of document.querySelectorAll(".disclaimer-container, .promo")) {
     const text = banner.innerText.toLowerCase();
     if (text.includes("limit resets on") || text.includes("responses will use other models") || text.includes("reached your")) {
@@ -153,29 +153,23 @@ function selectPreferredModel() {
     }
   }
 
-  // Snapshot what model the trigger pill currently shows.
   const triggerLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
   if (triggerLabel) {
     const m = getModelFromText(triggerLabel.textContent);
     if (m) lastKnownModel = m;
   }
 
-  // Build the preference-ordered fallback list for this evaluation.
-  // "pro" is the default map entry via MODEL_HIERARCHY_BASE.
   const hierarchyMap = {
-    "thinking": ["thinking", "pro", "fast"],
-    "fast":     ["fast", "thinking", "pro"],
+    "flash": ["flash", "pro", "flash-lite"],
+    "flash-lite": ["flash-lite", "flash", "pro"],
   };
   const MODEL_HIERARCHY = hierarchyMap[settings.preferredModel] ?? [...MODEL_HIERARCHY_BASE];
 
   // ── Case A: Model dropdown is currently open ──────────────────────────────
-  const optionsFound = document.querySelector("[role='menuitemradio'], [role='menuitem']");
+  const optionsFound = document.querySelector("gem-menu-item, [role='menuitemradio'], [role='menuitem']");
   if (optionsFound) {
-    // Re-entrancy guard: if we're already inside the 150 ms aria-disabled wait,
-    // don't start another evaluation on top of it.
     if (window._geminiSwitcherEvaluatingMenu) return;
 
-    // If the menu appeared but we didn't open it, the user must have.
     if (!isExtensionClick) {
       userManuallySelected = true;
       if (observer) observer.disconnect();
@@ -184,24 +178,23 @@ function selectPreferredModel() {
 
     window._geminiSwitcherEvaluatingMenu = true;
 
-    // Google attaches aria-disabled to rate-limited options asynchronously
-    // after the menu renders. Wait 150 ms so those attributes are present
-    // before we decide which option to click.
     setTimeout(() => {
-      window._geminiSwitcherEvaluatingMenu = false;
+      if (!document.querySelector("gem-menu-item, [role='menuitemradio'], [role='menuitem']")) {
+        window._geminiSwitcherEvaluatingMenu = false;
+        return;
+      }
 
-      // Menu may have closed during the wait (e.g. user pressed Escape).
-      if (!document.querySelector("[role='menuitemradio'], [role='menuitem']")) return;
-
-      // Walk the priority list and pick the first available (non-limited) model.
       for (const modelKey of MODEL_HIERARCHY) {
         let option = document.querySelector(MODEL_SELECTORS[modelKey]);
 
-        // data-test-id selectors are preferred but may disappear in future
-        // Gemini updates. Fall back to case-insensitive text matching.
         if (!option) {
-          option = Array.from(document.querySelectorAll("[role='menuitemradio'], [role='menuitem']"))
-            .find(el => el.innerText.toLowerCase().includes(modelKey));
+          option = Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
+            .find(el => {
+              const elText = el.innerText.toLowerCase();
+              if (modelKey === "flash" && elText.includes("lite")) return false;
+              if (elText.includes("thinking level")) return false;
+              return elText.includes(modelKey);
+            });
         }
         if (!option) continue;
 
@@ -215,53 +208,100 @@ function selectPreferredModel() {
         }
         knownRateLimitedModels.delete(modelKey);
 
-        // Whether the model is already active or needs switching, we always
-        // call simulateOptionClick: it selects a new model OR closes the menu
-        // if the correct one is already checked — both outcomes are correct.
         const isSelected =
+          lastKnownModel === modelKey ||
+          option.classList.contains("selected") ||
           option.getAttribute("aria-checked") === "true" ||
           option.getAttribute("aria-current") === "true";
 
-        // Short delay so any pending Angular micro-tasks settle before the click.
-        setExtensionClick(800);
-        setTimeout(() => {
-          simulateOptionClick(option);
-          lastKnownModel = modelKey;
-          // After clicking, update lastKnownModel from the live label once
-          // Gemini has had time to update it.
-          extensionActionTimeout = setTimeout(() => {
-            isExtensionClick = false;
-            const newLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
-            if (newLabel) lastKnownModel = getModelFromText(newLabel.textContent);
-          }, 800);
-        }, 50);
+        const needsThinkingUpdate = lastKnownThinkingLevel !== settings.thinkingLevel;
+
+        if (isSelected && !needsThinkingUpdate) {
+          window._geminiSwitcherEvaluatingMenu = false;
+          return;
+        }
+
+        if (!isSelected) {
+          setExtensionClick(2000); // give enough time for the full cycle
+          window._geminiSwitcherEvaluatingMenu = true; // Hard lock observer
+
+          setTimeout(() => {
+            simulateOptionClick(option);
+            lastKnownModel = modelKey;
+            lastKnownThinkingLevel = null; // force re-evaluation
+            lastTriggerClickTime = Date.now() + 10000; // Prevent observer from prematurely opening menu
+
+            setTimeout(() => {
+              isExtensionClick = false;
+              const newLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
+              if (newLabel) lastKnownModel = getModelFromText(newLabel.textContent);
+
+              lastTriggerClickTime = 0; // Unblock menu opening
+              window._geminiSwitcherEvaluatingMenu = false; // Unlock observer
+              selectPreferredModel(); // Safely start Cycle 2
+            }, 600); // Wait 1.2s for Gemini to completely settle after a model change
+
+          }, 50);
+          return;
+        }
+
+        // Logic for setting thinking level if the model is already selected
+        const thinkingBtn = document.querySelector('gem-menu-item[value="thinking_level"]') ||
+          Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
+            .find(el => el.textContent.toLowerCase().includes("thinking level") && el.getAttribute('value') === 'thinking_level');
+
+        if (thinkingBtn) {
+          setExtensionClick(1000);
+          simulateOptionClick(thinkingBtn);
+
+          setTimeout(() => {
+            const levelOpt = Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
+              .find(el => {
+                const txt = el.textContent.toLowerCase();
+                return txt.includes(settings.thinkingLevel) && el.getAttribute('value') !== 'thinking_level';
+              });
+
+            setExtensionClick(1000);
+            if (levelOpt) {
+              simulateOptionClick(levelOpt);
+            } else {
+              simulateOptionClick(option); // close menu fallback
+            }
+            lastKnownThinkingLevel = settings.thinkingLevel;
+            window._geminiSwitcherEvaluatingMenu = false;
+          }, 600);
+          return;
+        } else {
+          lastKnownThinkingLevel = settings.thinkingLevel;
+          window._geminiSwitcherEvaluatingMenu = false;
+        }
+
         return;
       }
-      // If every model in the hierarchy was rate-limited, there's nothing to do.
+
+      window._geminiSwitcherEvaluatingMenu = false;
     }, 150);
     return;
   }
 
   // ── Case B: Menu is closed – decide if we need to open it ─────────────────
-  // Compare the currently-active model against the best available option.
-  // If they match, nothing to do. If they don't, open the menu so Case A runs.
   if (lastKnownModel) {
     let bestIdx = 0;
     while (bestIdx < MODEL_HIERARCHY.length && knownRateLimitedModels.has(MODEL_HIERARCHY[bestIdx])) {
       bestIdx++;
     }
-    // lastKnownModel is already the best available option — nothing to switch.
-    if (MODEL_HIERARCHY.indexOf(lastKnownModel) === bestIdx) return;
+    const bestModel = MODEL_HIERARCHY[bestIdx];
+
+    if (MODEL_HIERARCHY.indexOf(lastKnownModel) === bestIdx && lastKnownThinkingLevel === settings.thinkingLevel) {
+      return;
+    }
   }
 
   const triggerBtn = document.querySelector(TRIGGER_SELECTOR);
   if (triggerBtn) {
     const now = Date.now();
-    // Debounce: don't spam-open the menu if a previous open is still in flight.
     if (now - lastTriggerClickTime < 1000) return;
 
-    // mouseover before click mirrors what a real mouse hover does and helps
-    // Angular's event model attach the menu correctly before it opens.
     setExtensionClick(1000);
     triggerBtn.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     simulateClick(triggerBtn);
@@ -281,18 +321,12 @@ let currentUrl = location.href;
 function handleNavigation() {
   if (location.href === currentUrl) return;
   currentUrl = location.href;
-  // A new chat starts fresh — clear rate-limit knowledge and manual-override
-  // flags so the extension auto-switches on the new page.
   resetState();
   restartObserver();
   setTimeout(() => selectPreferredModel(), 500);
 }
 
-// Three complementary strategies to catch Gemini's SPA navigation:
-// 1. MutationObserver on body — catches most pushState-driven route changes.
-// 2. popstate — catches browser back/forward button navigation.
-// 3. setInterval — safety net for pushState/replaceState calls that don't
-//    trigger a DOM mutation or popstate (e.g. deep-linked message anchors).
 new MutationObserver(handleNavigation).observe(document.body, { childList: true, subtree: true });
 window.addEventListener("popstate", handleNavigation);
 setInterval(handleNavigation, 500);
+
