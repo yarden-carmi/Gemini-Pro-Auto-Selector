@@ -1,6 +1,6 @@
 # Gemini Pro Auto-Selector
 
-[![Version](https://img.shields.io/badge/version-1.4-blue.svg)](https://github.com/yarden-carmi/Gemini-Pro-Auto-Selector/releases)
+[![Version](https://img.shields.io/badge/version-1.5-blue.svg)](https://github.com/yarden-carmi/Gemini-Pro-Auto-Selector/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/dlodbmpajmgenlgncfjmlpcomibkioma.svg?label=Chrome)](https://chromewebstore.google.com/detail/dlodbmpajmgenlgncfjmlpcomibkioma?utm_source=item-share-cb)
 [![Firefox Add-ons](https://img.shields.io/amo/v/gemini-pro-auto-selector.svg?label=Firefox)](https://addons.mozilla.org/en-US/firefox/addon/gemini-pro-auto-selector/)
@@ -25,7 +25,7 @@ A browser extension that automatically selects your preferred model on [Google G
 
 ## How it works
 
-On every Gemini page load and navigation, the extension reads the active model from the interface and compares it against your saved preference. If they differ — or if a rate-limit banner is detected — it opens the model switcher and selects the best available option from a configurable priority list (`Pro → Thinking → Fast` by default).
+On every Gemini page load and navigation, the extension reads the active model from the interface and compares it against your saved preference. If they differ — or if a rate-limit banner is detected — it opens the model switcher and selects the best available option from a configurable priority list (`Pro → Flash → Flash-Lite` by default). It will also automatically apply your preferred "Thinking Level".
 
 Once you manually interact with the model switcher yourself, the extension backs off for the rest of the session.
 
@@ -41,9 +41,9 @@ Once you manually interact with the model switcher yourself, the extension backs
 
 ## Screenshots
 
-| Model Switching Popup Interface | Popup Interface |
+| Thinking Level Interface | Model Selection Interface |
 | :---: | :---: |
-| ![Model switcher](assets/screenshot1.png) | ![Extension popup](assets/screenshot2.png) |
+| ![Thinking Level](assets/screenshot1.png) | ![Extension popup](assets/screenshot2.png) |
 
 ## Installation
 
@@ -76,7 +76,8 @@ Once you manually interact with the model switcher yourself, the extension backs
 Click the extension icon in your toolbar to open the popup. From there you can:
 
 - **Enable or disable** the auto-switcher.
-- **Set your preferred model**: Pro, Thinking, or Fast.
+- **Set your preferred model**: Pro, Flash, or Flash-Lite.
+- **Set your preferred thinking level**: Standard or Extended.
 
 The extension will keep Gemini on your selection and fall back automatically when a model is unavailable.
 
