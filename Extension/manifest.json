@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini Pro Auto-Selector",
-  "version": "1.5",
+  "version": "1.6",
   "browser_specific_settings": {
     "gecko": {
       "id": "Gemini-Pro-Auto-Selector@yarden-carmi",
@@ -30,7 +30,8 @@
         "https://gemini.google.com/*"
       ],
       "exclude_matches": [
-        "https://gemini.google.com/gems/create*"
+        "https://gemini.google.com/gems/*",
+        "https://gemini.google.com/gems"
       ],
       "js": [
         "content.js"

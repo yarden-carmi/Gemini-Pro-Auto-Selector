@@ -3,20 +3,10 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 
 // CSS selectors for Gemini's model-switcher UI elements.
-// These are stable class/attribute names used throughout the extension.
-const TRIGGER_SELECTOR = ".input-area-switch";          // The pill button that opens the model menu
-const TRIGGER_LABEL_SELECTOR = ".logo-pill-label-container span"; // Text label inside the trigger pill
-
-// Maps each internal model key to its aria data-test-id in the dropdown menu.
-// Gemini uses these predictable test IDs, so we prefer them over text-matching.
-const MODEL_SELECTORS = {
-  "pro": "[data-test-id='bard-mode-option-pro']",
-  "flash": "[data-test-id='bard-mode-option-flash']",
-  "flash-lite": "[data-test-id='bard-mode-option-flash-lite']"
-};
+const TRIGGER_SELECTOR = ".input-area-switch";
+const TRIGGER_LABEL_SELECTOR = ".input-area-switch, .logo-pill-label-container";
 
 // Default priority order when the user picks "pro" (or an unknown value).
-// The extension walks this list top-to-bottom and picks the first non-limited model.
 const MODEL_HIERARCHY_BASE = ["pro", "flash", "flash-lite"];
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -28,7 +18,7 @@ let settings = { enabled: true, preferredModel: "pro", thinkingLevel: "standard"
 let userManuallySelected = false;
 
 let lastKnownModel = null;         // Last confirmed model key seen in the trigger label
-let lastKnownThinkingLevel = null; // Last confirmed thinking level
+let lastKnownThinkingLevel = null; // Last confirmed thinking level ("standard" | "extended")
 let lastTriggerClickTime = 0;      // Timestamp of the last programmatic trigger click (debounce)
 let isExtensionClick = false;      // Guards against misidentifying our own synthetic clicks as manual input
 let extensionActionTimeout = null; // Timer handle for clearing isExtensionClick
@@ -37,32 +27,49 @@ let observer = null;               // The primary MutationObserver that watches 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Derive a model key from a display text string. */
+/** Derive a model key from a display text string (supports 3.7, 3.8, etc.). */
 function getModelFromText(text) {
+  if (!text) return null;
   text = text.trim().toLowerCase();
-  if (text.includes("pro")) return "pro";
-  if (text.includes("flash-lite")) return "flash-lite";
+  if (text.includes("flash-lite") || text.includes("flash lite")) return "flash-lite";
   if (text.includes("flash") && !text.includes("lite")) return "flash";
+  if (text.includes("pro")) return "pro";
   return null;
 }
 
-/** Simulate a single trusted click (used to open/close menus). */
-function simulateClick(element) {
-  if (!element) return;
-  element.focus();
-  element.dispatchEvent(new MouseEvent("click", {
-    bubbles: true, cancelable: true, view: window, composed: true
-  }));
+/** Check if the current URL should be excluded (e.g. Gems creation/editor pages). */
+function isExcludedPage() {
+  const path = location.pathname.toLowerCase();
+  return path.startsWith("/gems") || location.href.toLowerCase().includes("/gems");
 }
 
-/**
- * Simulate a full mousedown→mouseup→click sequence.
- * Some Angular/Material menu items only react to the full event chain,
- * so a bare 'click' event isn't always enough to register a selection.
- */
+/** Check if the found trigger element is truly the model selector (not a tool picker). */
+function isValidModelTrigger(triggerEl) {
+  if (!triggerEl) return false;
+  const text = (triggerEl.innerText + " " + (triggerEl.getAttribute("aria-label") || "")).toLowerCase();
+  if (text.includes("tool") || triggerEl.closest(".gem-builder, .tool-selector, .default-tool-container")) {
+    return false;
+  }
+  return true;
+}
+
+/** Check if trigger indicates Extended thinking is active. */
+function getThinkingFromTrigger(triggerEl) {
+  if (!triggerEl) return "standard";
+  const text = (triggerEl.innerText + " " + (triggerEl.getAttribute("aria-label") || "")).toLowerCase();
+  return text.includes("extended") ? "extended" : "standard";
+}
+
+/** Simulate a single trusted click. */
+function simulateClick(element) {
+  if (!element) return;
+  try { element.click(); } catch (e) { }
+}
+
+/** Simulate a full mousedown→mouseup→click sequence without double-firing click. */
 function simulateOptionClick(element) {
   if (!element) return;
-  ["mousedown", "mouseup", "click"].forEach(type => {
+  ["mousedown", "mouseup"].forEach(type => {
     element.dispatchEvent(new MouseEvent(type, {
       bubbles: true, cancelable: true, view: window, composed: true
     }));
@@ -118,8 +125,11 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 
   resetState();
-  const triggerLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
-  if (triggerLabel) lastKnownModel = getModelFromText(triggerLabel.textContent);
+  const trigger = document.querySelector(TRIGGER_SELECTOR);
+  if (trigger) {
+    lastKnownModel = getModelFromText(trigger.innerText);
+    lastKnownThinkingLevel = getThinkingFromTrigger(trigger);
+  }
   setExtensionClick(800);
 
   restartObserver();
@@ -129,10 +139,10 @@ chrome.storage.onChanged.addListener((changes) => {
 // ── Manual-interaction detection ─────────────────────────────────────────────
 
 document.addEventListener("mousedown", (e) => {
-  const isTrigger = e.target.closest(".input-area-switch");
+  const isTrigger = e.target.closest(TRIGGER_SELECTOR);
   const isModelOption = e.target.closest("gem-menu-item, [role='menuitemradio'], [role='menuitem']");
 
-  if ((isTrigger || isModelOption) && e.isTrusted) {
+  if ((isTrigger || isModelOption) && e.isTrusted && !isExtensionClick) {
     userManuallySelected = true;
     if (observer) observer.disconnect();
     isExtensionClick = false;
@@ -143,8 +153,9 @@ document.addEventListener("mousedown", (e) => {
 // ── Core logic ───────────────────────────────────────────────────────────────
 
 function selectPreferredModel() {
-  if (!settings.enabled || userManuallySelected) return;
+  if (!settings.enabled || userManuallySelected || isExcludedPage()) return;
 
+  // Check rate limit banners
   for (const banner of document.querySelectorAll(".disclaimer-container, .promo")) {
     const text = banner.innerText.toLowerCase();
     if (text.includes("limit resets on") || text.includes("responses will use other models") || text.includes("reached your")) {
@@ -153,15 +164,17 @@ function selectPreferredModel() {
     }
   }
 
-  const triggerLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
-  if (triggerLabel) {
-    const m = getModelFromText(triggerLabel.textContent);
+  const trigger = document.querySelector(TRIGGER_SELECTOR);
+  if (trigger && isValidModelTrigger(trigger)) {
+    const m = getModelFromText(trigger.innerText);
     if (m) lastKnownModel = m;
+    lastKnownThinkingLevel = getThinkingFromTrigger(trigger);
   }
 
   const hierarchyMap = {
     "flash": ["flash", "pro", "flash-lite"],
     "flash-lite": ["flash-lite", "flash", "pro"],
+    "pro": ["pro", "flash", "flash-lite"]
   };
   const MODEL_HIERARCHY = hierarchyMap[settings.preferredModel] ?? [...MODEL_HIERARCHY_BASE];
 
@@ -179,23 +192,23 @@ function selectPreferredModel() {
     window._geminiSwitcherEvaluatingMenu = true;
 
     setTimeout(() => {
-      if (!document.querySelector("gem-menu-item, [role='menuitemradio'], [role='menuitem']")) {
+      const allMenuItems = Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"));
+      if (!allMenuItems.length) {
         window._geminiSwitcherEvaluatingMenu = false;
         return;
       }
 
       for (const modelKey of MODEL_HIERARCHY) {
-        let option = document.querySelector(MODEL_SELECTORS[modelKey]);
+        // Find model option matching modelKey (e.g. 3.7 Flash, 3.8 Flash, 3.1 Pro, etc.)
+        let option = allMenuItems.find(el => {
+          const elText = el.innerText.toLowerCase();
+          if (elText.includes("extended thinking") || elText.includes("thinking level")) return false;
+          if (modelKey === "flash-lite") return elText.includes("flash-lite") || elText.includes("flash lite");
+          if (modelKey === "flash") return elText.includes("flash") && !elText.includes("lite");
+          if (modelKey === "pro") return elText.includes("pro");
+          return false;
+        });
 
-        if (!option) {
-          option = Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
-            .find(el => {
-              const elText = el.innerText.toLowerCase();
-              if (modelKey === "flash" && elText.includes("lite")) return false;
-              if (elText.includes("thinking level")) return false;
-              return elText.includes(modelKey);
-            });
-        }
         if (!option) continue;
 
         const isRateLimited =
@@ -209,10 +222,8 @@ function selectPreferredModel() {
         knownRateLimitedModels.delete(modelKey);
 
         const isSelected =
-          lastKnownModel === modelKey ||
           option.classList.contains("selected") ||
-          option.getAttribute("aria-checked") === "true" ||
-          option.getAttribute("aria-current") === "true";
+          !!option.querySelector("[aria-label='Selected'], .selected");
 
         const needsThinkingUpdate = lastKnownThinkingLevel !== settings.thinkingLevel;
 
@@ -221,38 +232,75 @@ function selectPreferredModel() {
           return;
         }
 
+        // If target model is not selected yet, click it
         if (!isSelected) {
-          setExtensionClick(2000); // give enough time for the full cycle
-          window._geminiSwitcherEvaluatingMenu = true; // Hard lock observer
+          setExtensionClick(2000);
+          window._geminiSwitcherEvaluatingMenu = true;
 
           setTimeout(() => {
             simulateOptionClick(option);
             lastKnownModel = modelKey;
-            lastKnownThinkingLevel = null; // force re-evaluation
-            lastTriggerClickTime = Date.now() + 10000; // Prevent observer from prematurely opening menu
+            lastKnownThinkingLevel = null; // force re-evaluation of thinking
+            lastTriggerClickTime = Date.now() + 10000; // prevent premature menu opening
 
             setTimeout(() => {
               isExtensionClick = false;
-              const newLabel = document.querySelector(TRIGGER_LABEL_SELECTOR);
-              if (newLabel) lastKnownModel = getModelFromText(newLabel.textContent);
+              const newTrigger = document.querySelector(TRIGGER_SELECTOR);
+              if (newTrigger) {
+                lastKnownModel = getModelFromText(newTrigger.innerText);
+                lastKnownThinkingLevel = getThinkingFromTrigger(newTrigger);
+              }
 
-              lastTriggerClickTime = 0; // Unblock menu opening
-              window._geminiSwitcherEvaluatingMenu = false; // Unlock observer
-              selectPreferredModel(); // Safely start Cycle 2
-            }, 600); // Wait 1.2s for Gemini to completely settle after a model change
-
+              lastTriggerClickTime = 0;
+              window._geminiSwitcherEvaluatingMenu = false;
+              selectPreferredModel(); // Re-evaluate to apply thinking level if needed
+            }, 600);
           }, 50);
           return;
         }
 
-        // Logic for setting thinking level if the model is already selected
-        const thinkingBtn = document.querySelector('gem-menu-item[value="thinking_level"]') ||
-          Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
-            .find(el => el.textContent.toLowerCase().includes("thinking level") && el.getAttribute('value') === 'thinking_level');
+        // Target model IS selected. Now evaluate thinking level.
+        // Look for the "Extended thinking" menu item in the dropdown
+        const extendedThinkingItem = allMenuItems.find(el => el.innerText.toLowerCase().includes("extended thinking"));
+        const legacyThinkingBtn = allMenuItems.find(el => el.innerText.toLowerCase().includes("thinking level") && el.getAttribute("value") === "thinking_level");
 
-        if (thinkingBtn) {
+        // Layout 1: Direct "Extended thinking" toggle item
+        if (extendedThinkingItem) {
+          const isExtendedSelected = extendedThinkingItem.classList.contains("selected") ||
+            !!extendedThinkingItem.querySelector("[aria-label='Selected'], .selected");
+          const wantsExtended = settings.thinkingLevel === "extended";
+
+          if (wantsExtended !== isExtendedSelected) {
+            // Need to toggle Extended thinking
+            setExtensionClick(1500);
+            simulateOptionClick(extendedThinkingItem);
+            lastKnownThinkingLevel = settings.thinkingLevel;
+
+            setTimeout(() => {
+              isExtensionClick = false;
+              const newTrigger = document.querySelector(TRIGGER_SELECTOR);
+              if (newTrigger) lastKnownThinkingLevel = getThinkingFromTrigger(newTrigger);
+              window._geminiSwitcherEvaluatingMenu = false;
+            }, 600);
+            return;
+          } else {
+            // Already matches
+            lastKnownThinkingLevel = settings.thinkingLevel;
+            window._geminiSwitcherEvaluatingMenu = false;
+            // Close menu
+            const trg = document.querySelector(TRIGGER_SELECTOR);
+            if (trg) {
+              setExtensionClick(500);
+              simulateClick(trg);
+            }
+            return;
+          }
+        }
+
+        // Layout 2: Legacy "Thinking level" sub-menu
+        if (legacyThinkingBtn) {
           setExtensionClick(1000);
-          simulateOptionClick(thinkingBtn);
+          simulateOptionClick(legacyThinkingBtn);
 
           setTimeout(() => {
             const levelOpt = Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
@@ -271,11 +319,11 @@ function selectPreferredModel() {
             window._geminiSwitcherEvaluatingMenu = false;
           }, 600);
           return;
-        } else {
-          lastKnownThinkingLevel = settings.thinkingLevel;
-          window._geminiSwitcherEvaluatingMenu = false;
         }
 
+        // No thinking option found on page
+        lastKnownThinkingLevel = settings.thinkingLevel;
+        window._geminiSwitcherEvaluatingMenu = false;
         return;
       }
 
@@ -290,21 +338,22 @@ function selectPreferredModel() {
     while (bestIdx < MODEL_HIERARCHY.length && knownRateLimitedModels.has(MODEL_HIERARCHY[bestIdx])) {
       bestIdx++;
     }
-    const bestModel = MODEL_HIERARCHY[bestIdx];
 
-    if (MODEL_HIERARCHY.indexOf(lastKnownModel) === bestIdx && lastKnownThinkingLevel === settings.thinkingLevel) {
+    const currentIdx = MODEL_HIERARCHY.indexOf(lastKnownModel);
+    const thinkingMatches = lastKnownThinkingLevel === settings.thinkingLevel;
+
+    if (currentIdx === bestIdx && thinkingMatches) {
       return;
     }
   }
 
   const triggerBtn = document.querySelector(TRIGGER_SELECTOR);
-  if (triggerBtn) {
+  if (triggerBtn && isValidModelTrigger(triggerBtn)) {
     const now = Date.now();
     if (now - lastTriggerClickTime < 1000) return;
 
     setExtensionClick(1000);
-    triggerBtn.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-    simulateClick(triggerBtn);
+    simulateOptionClick(triggerBtn);
     lastTriggerClickTime = now;
   }
 }
@@ -329,4 +378,3 @@ function handleNavigation() {
 new MutationObserver(handleNavigation).observe(document.body, { childList: true, subtree: true });
 window.addEventListener("popstate", handleNavigation);
 setInterval(handleNavigation, 500);
-
