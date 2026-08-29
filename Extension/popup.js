@@ -14,9 +14,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const selectedThinkingDisplay = document.getElementById('selected-thinking-display');
 
   const modelOptions = {
-    'pro':        { name: '3.1 Pro',      icon: 'diamond_shine' },
-    'flash':      { name: '3.5 Flash',    icon: 'bolt' },
-    'flash-lite': { name: '3.1 Flash-Lite', icon: 'speed' }
+    'pro':        { name: 'Pro',        icon: 'diamond_shine' },
+    'flash':      { name: 'Flash',      icon: 'bolt' },
+    'flash-lite': { name: 'Flash-Lite', icon: 'speed' }
   };
 
   const thinkingOptions = {

@@ -1,6 +1,6 @@
 # Gemini Pro Auto-Selector
 
-[![Version](https://img.shields.io/badge/version-1.5-blue.svg)](https://github.com/yarden-carmi/Gemini-Pro-Auto-Selector/releases)
+[![Version](https://img.shields.io/badge/version-1.6-blue.svg)](https://github.com/yarden-carmi/Gemini-Pro-Auto-Selector/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/dlodbmpajmgenlgncfjmlpcomibkioma.svg?label=Chrome)](https://chromewebstore.google.com/detail/dlodbmpajmgenlgncfjmlpcomibkioma?utm_source=item-share-cb)
 [![Firefox Add-ons](https://img.shields.io/amo/v/gemini-pro-auto-selector.svg?label=Firefox)](https://addons.mozilla.org/en-US/firefox/addon/gemini-pro-auto-selector/)
