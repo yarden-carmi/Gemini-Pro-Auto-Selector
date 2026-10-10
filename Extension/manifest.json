@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini Pro Auto-Selector",
-  "version": "1.6",
+  "version": "1.7",
   "browser_specific_settings": {
     "gecko": {
       "id": "Gemini-Pro-Auto-Selector@yarden-carmi",

@@ -11,29 +11,31 @@ const MODEL_HIERARCHY_BASE = ["pro", "flash", "flash-lite"];
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-let settings = { enabled: true, preferredModel: "pro", thinkingLevel: "standard" };
+let settings = { enabled: true, preferredModel: "pro", thinkingLevel: "low" };
 
 // True once the user has physically clicked the model switcher this session.
 // When set, the auto-switcher backs off permanently until the page reloads.
 let userManuallySelected = false;
 
-let lastKnownModel = null;         // Last confirmed model key seen in the trigger label
-let lastKnownThinkingLevel = null; // Last confirmed thinking level ("standard" | "extended")
-let lastTriggerClickTime = 0;      // Timestamp of the last programmatic trigger click (debounce)
-let isExtensionClick = false;      // Guards against misidentifying our own synthetic clicks as manual input
-let extensionActionTimeout = null; // Timer handle for clearing isExtensionClick
+let lastKnownModel = null;              // Last confirmed model key seen in trigger label ("pro" | "flash" | "flash-lite")
+let lastKnownThinkingLevel = null;      // Last confirmed thinking level ("low" | "medium" | "high")
+let lastTriggerClickTime = 0;           // Timestamp of the last programmatic trigger click (debounce)
+let isExtensionClick = false;           // Guards against misidentifying our own synthetic clicks as manual input
+let extensionActionTimeout = null;      // Timer handle for clearing isExtensionClick
 let knownRateLimitedModels = new Set(); // Models discovered to be rate-limited this session
-let observer = null;               // The primary MutationObserver that watches for DOM changes
+let modelsWithoutThinking = new Set();  // Models that don't support thinking levels in the UI
+let observer = null;                    // The primary MutationObserver that watches for DOM changes
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Derive a model key from a display text string (supports 3.7, 3.8, etc.). */
+/** Derive a model key from a display text string (supports 3.x, 4 / 4.*, Pro, etc.). */
 function getModelFromText(text) {
   if (!text) return null;
   text = text.trim().toLowerCase();
   if (text.includes("flash-lite") || text.includes("flash lite")) return "flash-lite";
   if (text.includes("flash") && !text.includes("lite")) return "flash";
-  if (text.includes("pro")) return "pro";
+  // Future-proof: matches Pro (e.g. 3.1 Pro, 4 Pro, 4.0 Pro) and 4 / 4.* (e.g. 4.0, 4.1, 4)
+  if (text.includes("pro") || /\b4(\.\d+)?\b/.test(text)) return "pro";
   return null;
 }
 
@@ -53,11 +55,71 @@ function isValidModelTrigger(triggerEl) {
   return true;
 }
 
-/** Check if trigger indicates Extended thinking is active. */
+/** Normalize thinking level string (supports legacy "standard" and "extended"). */
+function normalizeThinkingLevel(level) {
+  if (level === "standard") return "low";
+  if (level === "extended") return "high";
+  if (level === "low" || level === "medium" || level === "high") return level;
+  return "low";
+}
+
+/** Derive active thinking level from trigger button ("low" | "medium" | "high"). */
 function getThinkingFromTrigger(triggerEl) {
-  if (!triggerEl) return "standard";
-  const text = (triggerEl.innerText + " " + (triggerEl.getAttribute("aria-label") || "")).toLowerCase();
-  return text.includes("extended") ? "extended" : "standard";
+  if (!triggerEl) return "low";
+  const secondaryEl = triggerEl.querySelector(".picker-secondary-text, [data-test-id='secondary-text']");
+  const secondaryText = secondaryEl ? secondaryEl.textContent.trim().toLowerCase() : "";
+  const fullText = (triggerEl.innerText + " " + (triggerEl.getAttribute("aria-label") || "")).toLowerCase();
+
+  if (secondaryText === "high" || fullText.includes("high") || fullText.includes("extended")) {
+    return "high";
+  }
+  if (secondaryText === "medium" || fullText.includes("medium")) {
+    return "medium";
+  }
+  if (secondaryText === "low" || fullText.includes("low")) {
+    return "low";
+  }
+  return "low";
+}
+
+/** Determine if a dropdown menu item belongs to the thinking level picker. */
+function isThinkingMenuItem(el) {
+  if (!el) return false;
+  const text = el.innerText.toLowerCase();
+  const labelEl = el.querySelector(".label, .item-label, [class*='label']");
+  const label = (labelEl ? labelEl.textContent : el.innerText.split("\n")[0]).trim().toLowerCase();
+
+  if (label === "low" || label === "medium" || label === "high") return true;
+  if (text.includes("quick and efficient") || text.includes("balanced depth") || text.includes("extra thorough")) return true;
+  if (text.includes("extended thinking") || text.includes("thinking level")) return true;
+  return false;
+}
+
+/** Check if a menu item represents the requested modelKey. */
+function matchesModelOption(el, modelKey) {
+  if (isThinkingMenuItem(el)) return false;
+  const text = el.innerText.toLowerCase();
+
+  if (modelKey === "flash-lite") {
+    return text.includes("flash-lite") || text.includes("flash lite");
+  }
+  if (modelKey === "flash") {
+    return text.includes("flash") && !text.includes("lite");
+  }
+  if (modelKey === "pro") {
+    // Avoid accidentally matching any future 4.x Flash models
+    if (text.includes("flash")) return false;
+    // Matches 3.1 Pro, 4 Pro, 4.0 Pro, 4.* Pro, or 4 / 4.x
+    return text.includes("pro") || /\b4(\.\d+)?\b/.test(text);
+  }
+  return false;
+}
+
+/** Check whether a menu item is currently selected in Gemini's menu. */
+function isMenuItemSelected(el) {
+  if (!el) return false;
+  return el.classList.contains("selected") ||
+    !!el.querySelector("[aria-label='Selected'], .selected, mat-icon[fonticon='check']");
 }
 
 /** Simulate a single trusted click. */
@@ -95,6 +157,7 @@ function resetState() {
   lastKnownThinkingLevel = null;
   lastTriggerClickTime = 0;
   knownRateLimitedModels.clear();
+  modelsWithoutThinking.clear();
 }
 
 /** Disconnect and recreate the MutationObserver that drives auto-switching. */
@@ -109,7 +172,7 @@ function restartObserver() {
 chrome.storage.sync.get(["enabled", "preferredModel", "thinkingLevel"], (result) => {
   if (result.enabled !== undefined) settings.enabled = result.enabled;
   if (result.preferredModel !== undefined) settings.preferredModel = result.preferredModel;
-  if (result.thinkingLevel !== undefined) settings.thinkingLevel = result.thinkingLevel;
+  if (result.thinkingLevel !== undefined) settings.thinkingLevel = normalizeThinkingLevel(result.thinkingLevel);
   selectPreferredModel();
 });
 
@@ -120,14 +183,15 @@ chrome.storage.onChanged.addListener((changes) => {
     lastKnownThinkingLevel = null;
   }
   if (changes.thinkingLevel) {
-    settings.thinkingLevel = changes.thinkingLevel.newValue;
+    settings.thinkingLevel = normalizeThinkingLevel(changes.thinkingLevel.newValue);
     lastKnownThinkingLevel = null;
   }
 
   resetState();
   const trigger = document.querySelector(TRIGGER_SELECTOR);
-  if (trigger) {
-    lastKnownModel = getModelFromText(trigger.innerText);
+  if (trigger && isValidModelTrigger(trigger)) {
+    const primaryLabel = trigger.querySelector(".picker-primary-text, [data-test-id='primary-text']");
+    lastKnownModel = getModelFromText(primaryLabel ? primaryLabel.innerText : trigger.innerText);
     lastKnownThinkingLevel = getThinkingFromTrigger(trigger);
   }
   setExtensionClick(800);
@@ -166,7 +230,8 @@ function selectPreferredModel() {
 
   const trigger = document.querySelector(TRIGGER_SELECTOR);
   if (trigger && isValidModelTrigger(trigger)) {
-    const m = getModelFromText(trigger.innerText);
+    const primaryLabel = trigger.querySelector(".picker-primary-text, [data-test-id='primary-text']");
+    const m = getModelFromText(primaryLabel ? primaryLabel.innerText : trigger.innerText);
     if (m) lastKnownModel = m;
     lastKnownThinkingLevel = getThinkingFromTrigger(trigger);
   }
@@ -199,16 +264,7 @@ function selectPreferredModel() {
       }
 
       for (const modelKey of MODEL_HIERARCHY) {
-        // Find model option matching modelKey (e.g. 3.7 Flash, 3.8 Flash, 3.1 Pro, etc.)
-        let option = allMenuItems.find(el => {
-          const elText = el.innerText.toLowerCase();
-          if (elText.includes("extended thinking") || elText.includes("thinking level")) return false;
-          if (modelKey === "flash-lite") return elText.includes("flash-lite") || elText.includes("flash lite");
-          if (modelKey === "flash") return elText.includes("flash") && !elText.includes("lite");
-          if (modelKey === "pro") return elText.includes("pro");
-          return false;
-        });
-
+        let option = allMenuItems.find(el => matchesModelOption(el, modelKey));
         if (!option) continue;
 
         const isRateLimited =
@@ -221,14 +277,18 @@ function selectPreferredModel() {
         }
         knownRateLimitedModels.delete(modelKey);
 
-        const isSelected =
-          option.classList.contains("selected") ||
-          !!option.querySelector("[aria-label='Selected'], .selected");
+        const isSelected = isMenuItemSelected(option);
+        const targetThinking = normalizeThinkingLevel(settings.thinkingLevel);
+        const thinkingMatches = modelsWithoutThinking.has(modelKey) || lastKnownThinkingLevel === targetThinking;
 
-        const needsThinkingUpdate = lastKnownThinkingLevel !== settings.thinkingLevel;
-
-        if (isSelected && !needsThinkingUpdate) {
+        if (isSelected && thinkingMatches) {
           window._geminiSwitcherEvaluatingMenu = false;
+          // Close menu since already satisfied
+          const trg = document.querySelector(TRIGGER_SELECTOR);
+          if (trg) {
+            setExtensionClick(500);
+            simulateOptionClick(trg);
+          }
           return;
         }
 
@@ -247,7 +307,8 @@ function selectPreferredModel() {
               isExtensionClick = false;
               const newTrigger = document.querySelector(TRIGGER_SELECTOR);
               if (newTrigger) {
-                lastKnownModel = getModelFromText(newTrigger.innerText);
+                const primary = newTrigger.querySelector(".picker-primary-text, [data-test-id='primary-text']");
+                lastKnownModel = getModelFromText(primary ? primary.innerText : newTrigger.innerText);
                 lastKnownThinkingLevel = getThinkingFromTrigger(newTrigger);
               }
 
@@ -260,21 +321,66 @@ function selectPreferredModel() {
         }
 
         // Target model IS selected. Now evaluate thinking level.
-        // Look for the "Extended thinking" menu item in the dropdown
-        const extendedThinkingItem = allMenuItems.find(el => el.innerText.toLowerCase().includes("extended thinking"));
-        const legacyThinkingBtn = allMenuItems.find(el => el.innerText.toLowerCase().includes("thinking level") && el.getAttribute("value") === "thinking_level");
+        // 1. New direct Thinking Levels menu (Low, Medium, High)
+        const lowItem = allMenuItems.find(el => {
+          if (!isThinkingMenuItem(el)) return false;
+          const lbl = (el.querySelector(".label, .item-label, [class*='label']")?.textContent || el.innerText.split("\n")[0]).trim().toLowerCase();
+          return lbl === "low" || el.innerText.toLowerCase().includes("quick and efficient");
+        });
+        const medItem = allMenuItems.find(el => {
+          if (!isThinkingMenuItem(el)) return false;
+          const lbl = (el.querySelector(".label, .item-label, [class*='label']")?.textContent || el.innerText.split("\n")[0]).trim().toLowerCase();
+          return lbl === "medium" || el.innerText.toLowerCase().includes("balanced depth");
+        });
+        const highItem = allMenuItems.find(el => {
+          if (!isThinkingMenuItem(el)) return false;
+          const lbl = (el.querySelector(".label, .item-label, [class*='label']")?.textContent || el.innerText.split("\n")[0]).trim().toLowerCase();
+          return lbl === "high" || el.innerText.toLowerCase().includes("extra thorough");
+        });
 
-        // Layout 1: Direct "Extended thinking" toggle item
+        if (lowItem || medItem || highItem) {
+          let targetThinkingItem = lowItem;
+          if (targetThinking === "medium") targetThinkingItem = medItem || lowItem;
+          else if (targetThinking === "high") targetThinkingItem = highItem || lowItem;
+
+          if (targetThinkingItem) {
+            if (isMenuItemSelected(targetThinkingItem)) {
+              // Already selected
+              lastKnownThinkingLevel = targetThinking;
+              window._geminiSwitcherEvaluatingMenu = false;
+              const trg = document.querySelector(TRIGGER_SELECTOR);
+              if (trg) {
+                setExtensionClick(500);
+                simulateOptionClick(trg);
+              }
+              return;
+            }
+
+            // Click the desired thinking item
+            setExtensionClick(1500);
+            simulateOptionClick(targetThinkingItem);
+            lastKnownThinkingLevel = targetThinking;
+
+            setTimeout(() => {
+              isExtensionClick = false;
+              const newTrigger = document.querySelector(TRIGGER_SELECTOR);
+              if (newTrigger) lastKnownThinkingLevel = getThinkingFromTrigger(newTrigger);
+              window._geminiSwitcherEvaluatingMenu = false;
+            }, 600);
+            return;
+          }
+        }
+
+        // 2. Fallback: Layout with direct "Extended thinking" toggle item
+        const extendedThinkingItem = allMenuItems.find(el => el.innerText.toLowerCase().includes("extended thinking"));
         if (extendedThinkingItem) {
-          const isExtendedSelected = extendedThinkingItem.classList.contains("selected") ||
-            !!extendedThinkingItem.querySelector("[aria-label='Selected'], .selected");
-          const wantsExtended = settings.thinkingLevel === "extended";
+          const isExtendedSelected = isMenuItemSelected(extendedThinkingItem);
+          const wantsExtended = targetThinking === "high";
 
           if (wantsExtended !== isExtendedSelected) {
-            // Need to toggle Extended thinking
             setExtensionClick(1500);
             simulateOptionClick(extendedThinkingItem);
-            lastKnownThinkingLevel = settings.thinkingLevel;
+            lastKnownThinkingLevel = targetThinking;
 
             setTimeout(() => {
               isExtensionClick = false;
@@ -284,20 +390,19 @@ function selectPreferredModel() {
             }, 600);
             return;
           } else {
-            // Already matches
-            lastKnownThinkingLevel = settings.thinkingLevel;
+            lastKnownThinkingLevel = targetThinking;
             window._geminiSwitcherEvaluatingMenu = false;
-            // Close menu
             const trg = document.querySelector(TRIGGER_SELECTOR);
             if (trg) {
               setExtensionClick(500);
-              simulateClick(trg);
+              simulateOptionClick(trg);
             }
             return;
           }
         }
 
-        // Layout 2: Legacy "Thinking level" sub-menu
+        // 3. Fallback: Legacy "Thinking level" sub-menu
+        const legacyThinkingBtn = allMenuItems.find(el => el.innerText.toLowerCase().includes("thinking level") && el.getAttribute("value") === "thinking_level");
         if (legacyThinkingBtn) {
           setExtensionClick(1000);
           simulateOptionClick(legacyThinkingBtn);
@@ -306,24 +411,31 @@ function selectPreferredModel() {
             const levelOpt = Array.from(document.querySelectorAll("gem-menu-item, [role='menuitemradio'], [role='menuitem']"))
               .find(el => {
                 const txt = el.textContent.toLowerCase();
-                return txt.includes(settings.thinkingLevel) && el.getAttribute('value') !== 'thinking_level';
+                const targetText = targetThinking === "high" ? "extended" : (targetThinking === "medium" ? "medium" : "standard");
+                return (txt.includes(targetText) || txt.includes(targetThinking)) && el.getAttribute('value') !== 'thinking_level';
               });
 
             setExtensionClick(1000);
             if (levelOpt) {
               simulateOptionClick(levelOpt);
             } else {
-              simulateOptionClick(option); // close menu fallback
+              simulateOptionClick(option);
             }
-            lastKnownThinkingLevel = settings.thinkingLevel;
+            lastKnownThinkingLevel = targetThinking;
             window._geminiSwitcherEvaluatingMenu = false;
           }, 600);
           return;
         }
 
-        // No thinking option found on page
-        lastKnownThinkingLevel = settings.thinkingLevel;
+        // No thinking option found on page for this model
+        modelsWithoutThinking.add(modelKey);
+        lastKnownThinkingLevel = targetThinking;
         window._geminiSwitcherEvaluatingMenu = false;
+        const trg = document.querySelector(TRIGGER_SELECTOR);
+        if (trg) {
+          setExtensionClick(500);
+          simulateOptionClick(trg);
+        }
         return;
       }
 
@@ -340,7 +452,8 @@ function selectPreferredModel() {
     }
 
     const currentIdx = MODEL_HIERARCHY.indexOf(lastKnownModel);
-    const thinkingMatches = lastKnownThinkingLevel === settings.thinkingLevel;
+    const targetThinking = normalizeThinkingLevel(settings.thinkingLevel);
+    const thinkingMatches = modelsWithoutThinking.has(lastKnownModel) || lastKnownThinkingLevel === targetThinking;
 
     if (currentIdx === bestIdx && thinkingMatches) {
       return;

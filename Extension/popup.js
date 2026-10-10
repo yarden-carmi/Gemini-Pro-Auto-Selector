@@ -20,8 +20,9 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const thinkingOptions = {
-    'standard': { name: 'Standard', icon: 'psychology' },
-    'extended': { name: 'Extended', icon: 'cognition_2' }
+    'low':    { name: 'Low',    icon: 'psychology' },
+    'medium': { name: 'Medium', icon: 'psychology_alt' },
+    'high':   { name: 'High',   icon: 'cognition_2' }
   };
 
   function closeDropdowns() {
@@ -92,7 +93,13 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.sync.get(['enabled', 'preferredModel', 'thinkingLevel'], (result) => {
     if (result.enabled !== undefined) enabledToggle.checked = result.enabled;
     updateDisplay(selectedModelDisplay, modelItems, result.preferredModel ?? 'pro', modelOptions);
-    updateDisplay(selectedThinkingDisplay, thinkingItems, result.thinkingLevel ?? 'standard', thinkingOptions);
+
+    let thinking = result.thinkingLevel;
+    if (thinking === 'standard') thinking = 'low';
+    else if (thinking === 'extended') thinking = 'high';
+    if (!thinking || !thinkingOptions[thinking]) thinking = 'low';
+
+    updateDisplay(selectedThinkingDisplay, thinkingItems, thinking, thinkingOptions);
 
     // Re-enable transitions after initial state is painted
     requestAnimationFrame(() => {
